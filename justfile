@@ -10,15 +10,18 @@ export AIRFLOW_HOME := justfile_directory() / ".airflow"
 export AIRFLOW__CORE__DAGS_FOLDER := justfile_directory() / "dags"
 export AIRFLOW__CORE__LOAD_EXAMPLES := "False"
 export PYTHONPATH := justfile_directory() / "include"
-# Airflow talks to kind as the least-privilege ServiceAccount, not as cluster-admin.
+# Airflow talks to kind as least-privilege ServiceAccounts, not as cluster-admin.
 export AIRFLOW_CONN_DUCKDB_K8S := '{"conn_type": "kubernetes", "extra": {"kube_config_path": "' + justfile_directory() / ".kube/airflow-exec.yaml" + '"}}'
+# Benchmark only: may create pods (KubernetesPodOperator side of the comparison).
+export AIRFLOW_CONN_DUCKDB_K8S_LAUNCHER := '{"conn_type": "kubernetes", "extra": {"kube_config_path": "' + justfile_directory() / ".kube/airflow-launcher.yaml" + '"}}'
+export LAUNCHER_KUBECONFIG := justfile_directory() / ".kube/airflow-launcher.yaml"
 
 # list recipes
 default:
     @just --list
 
 # everything from scratch: cluster, image, pod, kubeconfig, Airflow DB
-up: cluster image deploy kubeconfig airflow-init
+up: cluster image deploy kubeconfigs airflow-init
 
 # create the kind cluster (stand-in for AKS / EKS / GKE)
 cluster:
@@ -34,23 +37,26 @@ deploy:
     {{kubectl}} apply -f k8s/
     {{kubectl}} -n {{ns}} rollout status statefulset/duckdb-dbt --timeout=180s
 
-# write .kube/airflow-exec.yaml holding a 24h token for the airflow-exec ServiceAccount
-kubeconfig:
+# kubeconfigs for both ServiceAccounts (exec-only, and the benchmark's pod launcher)
+kubeconfigs: (kubeconfig "airflow-exec") (kubeconfig "airflow-launcher")
+
+# write .kube/<sa>.yaml holding a 24h token for that ServiceAccount
+kubeconfig sa="airflow-exec":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p .kube
     server=$({{kubectl}} config view --minify -o jsonpath='{.clusters[0].cluster.server}')
     ca=$({{kubectl}} config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
-    token=$({{kubectl}} -n {{ns}} create token airflow-exec --duration=24h)
-    cat > .kube/airflow-exec.yaml <<EOF
+    token=$({{kubectl}} -n {{ns}} create token {{sa}} --duration=24h)
+    cat > .kube/{{sa}}.yaml <<EOF
     apiVersion: v1
     kind: Config
-    current-context: airflow-exec
+    current-context: {{sa}}
     clusters: [{name: kind, cluster: {server: '$server', certificate-authority-data: '$ca'}}]
-    users: [{name: airflow-exec, user: {token: '$token'}}]
-    contexts: [{name: airflow-exec, context: {cluster: kind, user: airflow-exec, namespace: {{ns}}}}]
+    users: [{name: {{sa}}, user: {token: '$token'}}]
+    contexts: [{name: {{sa}}, context: {cluster: kind, user: {{sa}}, namespace: {{ns}}}}]
     EOF
-    echo "wrote .kube/airflow-exec.yaml"
+    echo "wrote .kube/{{sa}}.yaml"
 
 # install Airflow, migrate its DB, create the single-writer pool
 airflow-init:
@@ -58,9 +64,24 @@ airflow-init:
     uv run airflow db migrate
     uv run airflow pools set duckdb_writer 1 "DuckDB single writer"
 
-# run the DAG once, in-process, against the kind pod
+# run the DAG once, in-process, against the kind pod; fails if any task failed
 run:
     uv run airflow dags test duckdb_dbt_exec
+    uv run python bench/check_run.py duckdb_dbt_exec
+
+# latency benchmark: n tasks per group, exec vs pod-per-task, then the at-scale estimate
+bench n="10":
+    BENCH_N={{n}} uv run airflow dags test bench_exec_vs_kpo
+    uv run python bench/report.py
+    uv run python bench/estimate.py
+
+# burst: create many pods at once and time scheduling/start/finish
+burst pods="30":
+    uv run python bench/burst.py --pods {{pods}}
+
+# re-run only the at-scale estimate with your own assumptions: just estimate --work-s 45 --tasks 500 5000
+estimate *args:
+    uv run python bench/estimate.py {{args}}
 
 # ad-hoc query straight into the pod: just query "select * from customer_revenue"
 query sql:
@@ -82,4 +103,4 @@ reload: image
 # delete the kind cluster
 down:
     kind delete cluster --name {{cluster}}
-    rm -f .kube/airflow-exec.yaml
+    rm -f .kube/airflow-exec.yaml .kube/airflow-launcher.yaml

@@ -1,0 +1,72 @@
+name: e2e on kind
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bench_n:
+        description: "Benchmark tasks per group"
+        default: "5"
+      burst_pods:
+        description: "Pods created at once in the burst test"
+        default: "50"
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BENCH_N: ${{ inputs.bench_n || '5' }}
+      BURST_PODS: ${{ inputs.burst_pods || '50' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - uses: extractions/setup-just@v4
+
+      - name: Install kind
+        uses: helm/kind-action@v1.15.2
+        with:
+          install_only: true
+
+      - name: Cluster, image, forever pod, kubeconfigs, Airflow DB
+        run: just up
+
+      - name: DAG duckdb_dbt_exec (exec into the forever pod)
+        run: just run
+
+      - name: AksPodExecOperator tests (Azure mocked, kind real)
+        run: just test
+
+      - name: Benchmark exec vs pod-per-task + at-scale estimate
+        run: just bench "$BENCH_N"
+
+      - name: Burst test
+        run: just burst "$BURST_PODS"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: bench-results
+          path: bench/results/
+          if-no-files-found: ignore
+
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --context kind-duckdb-exec get pods -A -o wide || true
+          kubectl --context kind-duckdb-exec -n duckdb describe pods || true
+          kubectl --context kind-duckdb-exec -n duckdb get events --sort-by=.lastTimestamp || true
