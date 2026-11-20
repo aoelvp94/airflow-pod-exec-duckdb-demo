@@ -53,6 +53,9 @@ jobs:
       - name: Benchmark exec vs pod-per-task + at-scale estimate
         run: just bench "$BENCH_N"
 
+      - name: Same dbt project three ways (hand-made exec, Cosmos KUBERNETES_EXEC, Cosmos KUBERNETES)
+        run: just compare 3
+
       - name: Burst test
         run: just burst "$BURST_PODS"
 

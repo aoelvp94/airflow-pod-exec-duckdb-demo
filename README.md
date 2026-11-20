@@ -28,6 +28,7 @@ just run       # airflow dags test duckdb_dbt_exec
 just query "select * from customer_revenue order by revenue desc"
 just test      # AKS-flavoured operator, Azure mocked, kind real
 just bench 10  # exec vs pod-per-task latency + at-scale estimate
+just compare 3 # same dbt project: hand-made exec vs Cosmos KUBERNETES_EXEC vs Cosmos KUBERNETES
 just burst 50  # 50 pods created at once
 just down
 ```
@@ -58,6 +59,35 @@ something with a server (MotherDuck, or a DuckLake / Iceberg catalog that many r
 Note: DuckDB is embedded, not a server. The pod doesn't serve queries. Each exec starts a short-lived
 `dbt` or `python` process that opens the file. Read-only queries can run alongside each other, but a
 writer needs the file to itself, which is why writers share a one-slot pool.
+
+## Cosmos: per-node tasks, with or without a pod per task
+
+[astronomer-cosmos#3027](https://github.com/astronomer/astronomer-cosmos/pull/3027) (open, unreleased) adds
+`ExecutionMode.KUBERNETES_EXEC`: Cosmos keeps one Airflow task per dbt node, but runs each one with
+`KubernetesPodExecOperator` in an existing pod instead of starting a new one. That's this repo's pattern, packaged
+in Cosmos. [`dags/cosmos_dbt.py`](dags/cosmos_dbt.py) renders the same dbt project both ways from the
+manifest baked into the image. `pyproject.toml` pins the PR's head commit until it ships in a release.
+
+`just compare 3`, laptop with the lid open, same pod/image/pool for all three, tasks one after another:
+
+| DAG | how | tasks | wall p50 |
+|---|---|---:|---:|
+| `duckdb_dbt_exec` | hand-made: seed + **one** `dbt build` exec (+ query, report) | 4 | **6.8 s** |
+| `cosmos_dbt_kubernetes_exec` | Cosmos `KUBERNETES_EXEC`: exec per dbt node | 8 | **25.3 s** |
+| `cosmos_dbt_kubernetes` | Cosmos `KUBERNETES`: new pod per dbt node | 8 | **56.9 s** |
+
+- **Exec per node is about 2.2× faster than a new pod per node** (~2.3 s vs ~5–8 s per task). The whole difference
+  is pod start-up, which grows in the cloud (image pulls, new nodes).
+- **Per-node granularity still costs time.** Each Cosmos task starts a new `dbt` process that loads the
+  project again (~2 s here). The PR's docs say so too: exec "removes Pod startup overhead, not dbt process
+  startup or project parsing". One `dbt build` exec is the fastest, but you lose per-model tasks, retries and
+  lineage in Airflow.
+- **Pick by what you need in Airflow.** Per-model visibility and retries → Cosmos `KUBERNETES_EXEC` with a
+  one-slot pool. Lowest latency → a few coarse exec tasks selected by tag. A new pod per node only pays off when
+  tasks need isolation or their own resources.
+- **For `KUBERNETES` mode on DuckDB**, the pods must mount the same volume, or each model is built into a
+  throwaway file. That only works here because kind has a single node (ReadWriteOnce is per node). On a real
+  cluster you'd need ReadWriteMany storage or a database with a server.
 
 ## Measuring it
 
@@ -114,6 +144,7 @@ come out at 30 s or 1,000 s. CI is the reliable place to run it.
 ```
 dags/duckdb_dbt_exec.py          the DAG (exec tasks + XCom)
 dags/bench_exec_vs_kpo.py        benchmark DAG: exec vs KubernetesPodOperator, same work
+dags/cosmos_dbt.py               Cosmos DbtDags: KUBERNETES_EXEC (PR #3027) and KUBERNETES
 bench/                           report, burst test, at-scale estimator, run checker
 .github/workflows/e2e.yml        CI: everything above on kind
 include/demo_ops/settings.py     conn id, pod, pool, dbt flags

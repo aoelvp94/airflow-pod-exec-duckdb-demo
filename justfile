@@ -31,6 +31,12 @@ cluster:
 image:
     docker build -t {{image}} -f image/Dockerfile .
     kind load docker-image {{image}} --name {{cluster}}
+    just manifest
+
+# copy the dbt manifest out of the image, so Cosmos renders exactly what the pod will run
+manifest:
+    mkdir -p dbt/target
+    docker run --rm --entrypoint cat {{image}} /app/dbt/target/manifest.json > dbt/target/manifest.json
 
 # apply namespace, RBAC and the long-lived StatefulSet
 deploy:
@@ -75,6 +81,18 @@ bench n="10":
     uv run python bench/report.py
     uv run python bench/estimate.py
 
+# same dbt project three ways: hand-made exec, Cosmos KUBERNETES_EXEC, Cosmos KUBERNETES (runs each N times)
+compare runs="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for dag in duckdb_dbt_exec cosmos_dbt_kubernetes_exec cosmos_dbt_kubernetes; do
+      for i in $(seq {{runs}}); do
+        uv run airflow dags test "$dag" > /dev/null 2>&1 || true
+        uv run python bench/check_run.py "$dag"
+      done
+    done
+    uv run python bench/compare.py --runs {{runs}}
+
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":
     uv run python bench/burst.py --pods {{pods}}
@@ -82,6 +100,10 @@ burst pods="30":
 # re-run only the at-scale estimate with your own assumptions: just estimate --work-s 45 --tasks 500 5000
 estimate *args:
     uv run python bench/estimate.py {{args}}
+
+# any Airflow CLI command with this repo's env: just airflow dags list
+airflow *args:
+    uv run airflow {{args}}
 
 # ad-hoc query straight into the pod: just query "select * from customer_revenue"
 query sql:
