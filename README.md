@@ -74,18 +74,22 @@ Three tools, from measured to estimated:
    It adds the costs kind can't show (cold image pulls, waiting for a new node) as explicit assumptions and prices
    both options (Fargate list prices by default; override them). It prints which inputs were measured and which assumed.
 
-Local reference numbers (Apple Silicon laptop, Docker Desktop, single-node kind, image already on the node: the
-**best case** for pod-per-task). These are from a short run, so check them against the CI job summary:
+Reference numbers. Both use single-node kind with the image already on the node, which is the **best case** for
+pod-per-task. The CI numbers are the cleaner ones: a GitHub `ubuntu-latest` runner, 5 tasks per group. Local is an
+Apple Silicon laptop, 3 tasks per group.
 
-| p50 per task | exec into forever pod | new pod per task (KPO) |
-|---|---:|---:|
-| noop | 0.1 s | 5.5 s |
-| `dbt build` | 5.7 s | 11.2 s |
+| p50 per task | exec into forever pod | new pod per task (KPO) | difference |
+|---|---:|---:|---:|
+| noop, CI | 0.07 s | 5.1 s | +5.1 s |
+| `dbt build`, CI | 3.1 s | 7.1 s | +4.1 s (2.3×) |
+| noop, laptop | 0.1 s | 5.5 s | +5.4 s |
+| `dbt build`, laptop | 5.7 s | 11.2 s | +5.5 s (2.0×) |
 
-| burst | container started p50 / p95 | all finished |
+| burst (pods created at once) | container started p50 / p95 | all finished |
 |---|---:|---:|
-| 30 pods | 2.5 s / 3.5 s | 5.0 s |
-| 100 pods | 11.9 s / 14.3 s | 18.7 s |
+| 50 pods, CI | 6.2 s / 7.2 s | 11.3 s |
+| 30 pods, laptop | 2.5 s / 3.5 s | 5.0 s |
+| 100 pods, laptop | 11.9 s / 14.3 s | 18.7 s |
 
 Reading the estimate:
 
