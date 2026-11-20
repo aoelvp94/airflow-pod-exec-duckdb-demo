@@ -1,0 +1,13 @@
+name: duckdb_exec_demo
+version: "1.0.0"
+profile: duckdb_exec_demo
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+
+models:
+  duckdb_exec_demo:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

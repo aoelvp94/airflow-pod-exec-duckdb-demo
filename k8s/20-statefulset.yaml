@@ -1,0 +1,44 @@
+# The "forever pod": dbt + DuckDB installed, warehouse file on a PVC, doing nothing until exec'd into.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: duckdb-dbt
+  namespace: duckdb
+spec:
+  serviceName: duckdb-dbt
+  replicas: 1                      # DuckDB is single-writer: never scale this above 1
+  selector:
+    matchLabels: {app: duckdb-dbt}
+  template:
+    metadata:
+      labels: {app: duckdb-dbt}
+      annotations:
+        kubectl.kubernetes.io/default-container: dbt
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations: []
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: dbt
+          image: duckdb-dbt:dev
+          imagePullPolicy: IfNotPresent
+          # Idle, but exit promptly on SIGTERM instead of waiting out the grace period.
+          command: ["/bin/sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]
+          env:
+            - {name: DUCKDB_PATH, value: /data/warehouse.duckdb}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: {storage: 1Gi}

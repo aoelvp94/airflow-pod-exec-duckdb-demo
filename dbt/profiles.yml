@@ -1,0 +1,7 @@
+duckdb_exec_demo:
+  target: pod
+  outputs:
+    pod:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH') }}"
+      threads: 4

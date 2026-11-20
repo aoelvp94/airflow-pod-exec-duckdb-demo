@@ -1,0 +1,23 @@
+[project]
+name = "airflow-pod-exec-duckdb-demo"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "apache-airflow==3.4.0",
+    "apache-airflow-providers-cncf-kubernetes==11.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pyyaml>=6",
+    "azure-identity>=1.19",
+    "azure-mgmt-containerservice>=34",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["include"]
+testpaths = ["tests"]
