@@ -93,6 +93,15 @@ compare runs="3":
     done
     uv run python bench/compare.py --runs {{runs}}
 
+# same dbt project FOUR ways (adds Cosmos WATCHER_KUBERNETES) through a real local scheduler + triggerer
+compare-scheduled runs="3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    since=$(date -u '+%Y-%m-%d %H:%M:%S')
+    uv run python bench/scheduled.py --runs {{runs}} \
+      duckdb_dbt_exec cosmos_dbt_kubernetes_exec cosmos_dbt_kubernetes cosmos_dbt_watcher_kubernetes
+    uv run python bench/compare.py --runs {{runs}} --since "$since" --out bench/results/compare-scheduled.json
+
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":
     uv run python bench/burst.py --pods {{pods}}

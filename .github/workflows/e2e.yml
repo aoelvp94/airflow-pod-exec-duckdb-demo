@@ -56,6 +56,13 @@ jobs:
       - name: Same dbt project three ways (hand-made exec, Cosmos KUBERNETES_EXEC, Cosmos KUBERNETES)
         run: just compare 3
 
+      - name: Same dbt project four ways through a real scheduler (adds Cosmos WATCHER_KUBERNETES)
+        run: just compare-scheduled 3
+
+      - name: Keep the Airflow log
+        if: always()
+        run: cp .airflow/standalone.log bench/results/ 2>/dev/null || true
+
       - name: Burst test
         run: just burst "$BURST_PODS"
 

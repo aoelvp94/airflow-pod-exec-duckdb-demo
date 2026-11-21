@@ -23,6 +23,7 @@ DAGS = {
     "duckdb_dbt_exec": "hand-made exec: 1 `dbt build` exec",
     "cosmos_dbt_kubernetes_exec": "Cosmos KUBERNETES_EXEC: exec per dbt node",
     "cosmos_dbt_kubernetes": "Cosmos KUBERNETES: new pod per dbt node",
+    "cosmos_dbt_watcher_kubernetes": "Cosmos WATCHER_KUBERNETES: one new pod per DAG run",
 }
 OUT = Path(__file__).parent / "results" / "compare.json"
 
@@ -35,14 +36,17 @@ def secs(start: str, end: str) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--since", default="", help="only count runs started at/after this UTC time (YYYY-MM-DD HH:MM:SS)")
     a = ap.parse_args()
     con = sqlite3.connect(Path(os.environ["AIRFLOW_HOME"]) / "airflow.db")
 
     results = {}
     for dag_id in DAGS:
         runs = con.execute(
-            "select run_id from dag_run where dag_id = ? and state = 'success' order by id desc limit ?",
-            (dag_id, a.runs),
+            "select run_id from dag_run where dag_id = ? and state = 'success' and start_date >= ? "
+            "order by id desc limit ?",
+            (dag_id, a.since, a.runs),
         ).fetchall()
         walls, task_sums, n_tasks = [], [], 0
         for (run_id,) in runs:
@@ -65,11 +69,11 @@ def main() -> None:
                 "task_time_p50_s": round(statistics.median(task_sums), 2),
             }
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(results, indent=2))
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(json.dumps(results, indent=2))
 
     lines = [
-        "### Same dbt project, three ways (whole DAG run)",
+        "### Same dbt project, four ways (whole DAG run)",
         "",
         "| DAG | how | tasks | runs | wall p50 s | min–max s | sum of task time p50 s |",
         "|---|---|---:|---:|---:|---:|---:|",

@@ -1,6 +1,6 @@
 """
 cosmos_dbt_* — the same dbt project rendered by Cosmos, one Airflow task per dbt node,
-executed two ways so they can be compared with the hand-made `duckdb_dbt_exec` DAG:
+executed three ways so they can be compared with the hand-made `duckdb_dbt_exec` DAG:
 
     raw_customers_seed ─┐
                         ├─> stg_customers.run ─┐
@@ -11,9 +11,14 @@ executed two ways so they can be compared with the hand-made `duckdb_dbt_exec` D
 * cosmos_dbt_kubernetes       ExecutionMode.KUBERNETES (released): every node is a NEW pod from the same
                               image. The pods mount the forever pod's PVC so models built by one task are
                               visible to the next (fine on single-node kind: ReadWriteOnce is per node).
+* cosmos_dbt_watcher_kubernetes  ExecutionMode.WATCHER_KUBERNETES (released): ONE new pod per DAG run runs
+                              the whole `dbt build` (the producer); the per-node tasks are deferrable sensors
+                              that read its results. Pod start-up once per run instead of once per node.
 
-Both read dbt/target/manifest.json, copied out of the image by `just manifest`, so parse-time Airflow
-needs no dbt install. Every task uses the 1-slot `duckdb_writer` pool (DuckDB is single-writer).
+All read dbt/target/manifest.json, copied out of the image by `just manifest`, so parse-time Airflow
+needs no dbt install. Tasks use the 1-slot `duckdb_writer` pool (DuckDB is single-writer), except in the
+watcher DAG: its sensors wait alongside the producer and must not hold the slot it needs, and the
+producer is the only writer there anyway.
 Schedule: manual (comparison). Nothing downstream.
 """
 
@@ -76,6 +81,28 @@ cosmos_dbt_kubernetes_exec = DbtDag(
     **COMMON,
 )
 
+# What a NEW pod gets, shared by both modes that launch pods: same image, requests and volume as the forever pod.
+NEW_POD_ARGS = {
+    "kubernetes_conn_id": LAUNCHER_CONN_ID,
+    "namespace": NAMESPACE,
+    "image": IMAGE,
+    "image_pull_policy": "IfNotPresent",
+    "container_resources": V1ResourceRequirements(
+        requests={"cpu": POD_CPU_REQUEST, "memory": POD_MEMORY_REQUEST},
+        limits={"memory": "2Gi"},
+    ),
+    "node_selector": {"kubernetes.io/os": "linux"},
+    "volumes": [
+        V1Volume(
+            name="data",
+            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name="data-duckdb-dbt-0"),
+        )
+    ],
+    "volume_mounts": [V1VolumeMount(name="data", mount_path="/data")],
+    "get_logs": True,
+    "on_finish_action": "delete_pod",
+}
+
 cosmos_dbt_kubernetes = DbtDag(
     dag_id="cosmos_dbt_kubernetes",
     execution_config=ExecutionConfig(
@@ -83,29 +110,29 @@ cosmos_dbt_kubernetes = DbtDag(
         dbt_project_path=PROJECT_IN_CONTAINER,
     ),
     operator_args={
-        "kubernetes_conn_id": LAUNCHER_CONN_ID,
-        "namespace": NAMESPACE,
-        "image": IMAGE,
-        "image_pull_policy": "IfNotPresent",
-        "container_resources": V1ResourceRequirements(
-            requests={"cpu": POD_CPU_REQUEST, "memory": POD_MEMORY_REQUEST},
-            limits={"memory": "2Gi"},
-        ),
-        "node_selector": {"kubernetes.io/os": "linux"},
-        "volumes": [
-            V1Volume(
-                name="data",
-                persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name="data-duckdb-dbt-0"),
-            )
-        ],
-        "volume_mounts": [V1VolumeMount(name="data", mount_path="/data")],
+        **NEW_POD_ARGS,
         "labels": {"app": "cosmos-kpo"},
-        "get_logs": True,
-        "on_finish_action": "delete_pod",
         "deferrable": False,
         "pool": DUCKDB_WRITER_POOL,
     },
     tags=["cosmos", "dbt", "duckdb", "pod-per-task"],
+    doc_md=__doc__,
+    **COMMON,
+)
+
+cosmos_dbt_watcher_kubernetes = DbtDag(
+    dag_id="cosmos_dbt_watcher_kubernetes",
+    execution_config=ExecutionConfig(
+        execution_mode=ExecutionMode.WATCHER_KUBERNETES,
+        dbt_project_path=PROJECT_IN_CONTAINER,
+    ),
+    operator_args={
+        **NEW_POD_ARGS,
+        "labels": {"app": "cosmos-watcher"},
+        "log_events_on_failure": True,  # required by the watcher mode, with get_logs
+        # producer: plain KPO, not deferred; consumers: Cosmos's default deferrable sensors
+    },
+    tags=["cosmos", "dbt", "duckdb", "pod-per-run"],
     doc_md=__doc__,
     **COMMON,
 )
