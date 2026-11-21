@@ -53,7 +53,8 @@ def headline(fig, title: str, subtitle: str) -> None:
 def legend(fig) -> None:
     from matplotlib.patches import Patch
 
-    fig.legend(handles=[Patch(color=EXEC, label="exec into the running pod"), Patch(color=POD, label="new pod per task")],
+    fig.legend(handles=[Patch(color=EXEC, label="exec into an existing pod (Airflow does not manage it)"),
+                        Patch(color=POD, label="Airflow creates and deletes the pod")],
                loc="lower left", bbox_to_anchor=(0.02, 0.0), ncol=2, frameon=False, fontsize=9, labelcolor=TEXT_2)
 
 
@@ -91,9 +92,11 @@ def three_ways(compare: dict, out: Path, source: str) -> Path:
         ("One dbt build exec\n(hand-made, 4 tasks)", "duckdb_dbt_exec", EXEC),
         ("Cosmos KUBERNETES_EXEC\n(exec per dbt node, 8 tasks)", "cosmos_dbt_kubernetes_exec", EXEC),
         ("Cosmos KUBERNETES\n(new pod per dbt node, 8 tasks)", "cosmos_dbt_kubernetes", POD),
+        ("Cosmos WATCHER_KUBERNETES\n(1 new pod per run, 1 dbt build)", "cosmos_dbt_watcher_kubernetes", POD),
     ]
-    fig, ax = plt.subplots(figsize=(8, 3.8), dpi=200)
-    fig.subplots_adjust(left=0.31, right=0.93, top=0.74, bottom=0.19)
+    rows = [r for r in rows if r[1] in compare]  # the watcher only exists in scheduled comparisons
+    fig, ax = plt.subplots(figsize=(8, 2.6 + 0.6 * len(rows)), dpi=200)
+    fig.subplots_adjust(left=0.33, right=0.93, top=1 - 0.95 / (2.6 + 0.6 * len(rows)), bottom=0.7 / (2.6 + 0.6 * len(rows)))
     for i, (label, dag, color) in enumerate(rows):
         r = compare[dag]
         ax.barh(i, r["wall_p50_s"], height=0.55, color=color, edgecolor=SURFACE, linewidth=2)
@@ -105,10 +108,15 @@ def three_ways(compare: dict, out: Path, source: str) -> Path:
     frame(ax, max(compare[d]["wall_max_s"] for _, d, _ in rows) * 1.16)
     speedup = compare["cosmos_dbt_kubernetes"]["wall_p50_s"] / compare["cosmos_dbt_kubernetes_exec"]["wall_p50_s"]
     runs = compare["cosmos_dbt_kubernetes_exec"]["runs"]
-    headline(fig, f"Same dbt project: exec per node runs {speedup:.1f}× faster than a pod per node",
+    title = (
+        "Same dbt project, four ways, through a real scheduler"
+        if len(rows) == 4
+        else f"Same dbt project: exec per node runs {speedup:.1f}× faster than a pod per node"
+    )
+    headline(fig, title,
              f"Whole DAG run, median of {runs} (whiskers: fastest–slowest) · {source}")
     legend(fig)
-    path = out / "cosmos_three_ways.png"
+    path = out / ("cosmos_four_ways.png" if len(rows) == 4 else "cosmos_three_ways.png")
     fig.savefig(path)
     plt.close(fig)
     return path
@@ -119,11 +127,12 @@ def main() -> None:
     ap.add_argument("--latency", type=Path, required=True)
     ap.add_argument("--compare", type=Path, required=True)
     ap.add_argument("--source", default="GitHub Actions ubuntu-latest, single-node kind, image cached")
+    ap.add_argument("--compare-source", default=None, help="subtitle for the comparison chart, if different")
     ap.add_argument("--out", type=Path, default=Path("docs/img"))
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     print(per_task(json.loads(a.latency.read_text()), a.out, a.source))
-    print(three_ways(json.loads(a.compare.read_text()), a.out, a.source))
+    print(three_ways(json.loads(a.compare.read_text()), a.out, a.compare_source or a.source))
 
 
 if __name__ == "__main__":
