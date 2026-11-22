@@ -1,6 +1,6 @@
 """Shared constants for the demo DAGs."""
 
-KUBERNETES_CONN_ID = "duckdb_k8s"   # supplied as AIRFLOW_CONN_DUCKDB_K8S (see Makefile)
+KUBERNETES_CONN_ID = "duckdb_k8s"   # supplied as AIRFLOW_CONN_DUCKDB_K8S (see justfile)
 NAMESPACE = "duckdb"
 POD_NAME = "duckdb-dbt-0"           # StatefulSet => stable pod name
 CONTAINER = "dbt"

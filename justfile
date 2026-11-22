@@ -102,6 +102,10 @@ compare-scheduled runs="3":
       duckdb_dbt_exec cosmos_dbt_kubernetes_exec cosmos_dbt_kubernetes cosmos_dbt_watcher_kubernetes
     uv run python bench/compare.py --runs {{runs}} --since "$since" --out bench/results/compare-scheduled.json
 
+# cut an exec mid-run (on_kill, then SIGKILL of the client): does dbt keep running in the pod? does a retry work?
+cancel *args:
+    uv run python bench/cancel.py {{args}}
+
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":
     uv run python bench/burst.py --pods {{pods}}

@@ -63,6 +63,9 @@ jobs:
         if: always()
         run: cp .airflow/standalone.log bench/results/ 2>/dev/null || true
 
+      - name: Cancel an exec mid-run (on_kill and SIGKILL), then retry
+        run: just cancel
+
       - name: Burst test
         run: just burst "$BURST_PODS"
 

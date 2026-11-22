@@ -30,6 +30,7 @@ just test      # AKS-flavoured operator, Azure mocked, kind real
 just bench 10  # exec vs pod-per-task latency + at-scale estimate
 just compare 3 # same dbt project: hand-made exec vs Cosmos KUBERNETES_EXEC vs Cosmos KUBERNETES
 just burst 50  # 50 pods created at once
+just cancel    # cut an exec mid-run: does dbt stop in the pod?
 just down
 ```
 
@@ -136,6 +137,25 @@ Reading the estimate:
 - **Under KubernetesExecutor**, every Airflow task already runs in a worker pod, so exec saves the *second*
   pod (worker + KPO pod → worker only), not all pod overhead.
 
+### Cancelling an exec leaves dbt running in the pod
+
+**`just cancel`** ([`bench/cancel.py`](bench/cancel.py)) starts a slow `dbt show` through
+`KubernetesPodExecOperator` and cuts it after 10 s in two ways: `operator.on_kill()`, which Airflow calls on a
+timeout or when the task is marked failed, and a SIGKILL of the client process, which stands in for a dead worker or
+a dropped connection. Then it retries a `dbt run` straight away, and again after the first dbt exits.
+
+| cut by | dbt kept running in the pod | immediate retry | retry once the first dbt exited |
+|---|---|---|---|
+| `operator.on_kill()` | yes | failed: `Could not set lock on file "/data/warehouse.duckdb": Conflicting lock is held in … (PID …)` | succeeded |
+| SIGKILL of the client | yes | failed, same error | succeeded |
+
+`on_kill()` only closes the exec connection. The Kubernetes exec API can't send a signal to the remote process, so
+the command keeps running until it finishes. With DuckDB, the orphaned process keeps the write lock, so the
+retry fails. With a warehouse that has no lock, the retry would run alongside the first attempt. Cosmos'
+`KUBERNETES_EXEC` operators inherit this `on_kill`. Pod-per-task modes don't have the problem, because deleting the
+pod kills the process. Setting `retry_delay` longer than your longest run avoids the lock error, but it doesn't stop
+the orphan.
+
 Don't benchmark on a laptop with the lid closed: macOS sleeps on battery even under `caffeinate`, and tasks
 come out at 30 s or 1,000 s. CI is the reliable place to run it.
 
@@ -145,7 +165,7 @@ come out at 30 s or 1,000 s. CI is the reliable place to run it.
 dags/duckdb_dbt_exec.py          the DAG (exec tasks + XCom)
 dags/bench_exec_vs_kpo.py        benchmark DAG: exec vs KubernetesPodOperator, same work
 dags/cosmos_dbt.py               Cosmos DbtDags: KUBERNETES_EXEC (PR #3027) and KUBERNETES
-bench/                           report, burst test, at-scale estimator, run checker
+bench/                           report, burst, cancel test, at-scale estimator, run checker
 .github/workflows/e2e.yml        CI: everything above on kind
 include/demo_ops/settings.py     conn id, pod, pool, dbt flags
 include/demo_ops/aks_pod_exec.py home-made AksPodExecOperator (Airflow has no AKS flavour)
