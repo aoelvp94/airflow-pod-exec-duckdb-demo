@@ -31,6 +31,7 @@ just bench 10  # exec vs pod-per-task latency + at-scale estimate
 just compare 3 # same dbt project: hand-made exec vs Cosmos KUBERNETES_EXEC vs Cosmos KUBERNETES
 just burst 50  # 50 pods created at once
 just cancel    # cut an exec mid-run: does dbt stop in the pod?
+just scale     # synthetic projects of 10/50/200 models, four ways each (CI: manual workflow "scale on kind")
 just down
 ```
 

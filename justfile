@@ -3,6 +3,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 cluster := "duckdb-exec"
 ctx     := "kind-" + cluster
 image   := "duckdb-dbt:dev"
+# synthetic project sizes baked into the image for `just scale` (scale/gen.py)
+scale_sizes := env_var_or_default("SCALE_SIZES", "10 50 200")
 ns      := "duckdb"
 kubectl := "kubectl --context " + ctx
 
@@ -29,14 +31,23 @@ cluster:
 
 # build the dbt + DuckDB image and load it into kind
 image:
-    docker build -t {{image}} -f image/Dockerfile .
+    docker build -t {{image}} -f image/Dockerfile --build-arg SCALE_SIZES="{{scale_sizes}}" .
     kind load docker-image {{image}} --name {{cluster}}
-    just manifest
+    just manifest scale-manifests
 
 # copy the dbt manifest out of the image, so Cosmos renders exactly what the pod will run
 manifest:
     mkdir -p dbt/target
     docker run --rm --entrypoint cat {{image}} /app/dbt/target/manifest.json > dbt/target/manifest.json
+
+# same for the synthetic projects: scale/target/scale_<N>/manifest.json
+scale-manifests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for n in {{scale_sizes}}; do
+      mkdir -p scale/target/scale_$n
+      docker run --rm --entrypoint cat {{image}} /app/scale/scale_$n/target/manifest.json > scale/target/scale_$n/manifest.json
+    done
 
 # apply namespace, RBAC and the long-lived StatefulSet
 deploy:
@@ -105,6 +116,25 @@ compare-scheduled runs="3":
 # cut an exec mid-run (on_kill, then SIGKILL of the client): does dbt keep running in the pod? does a retry work?
 cancel *args:
     uv run python bench/cancel.py {{args}}
+
+# KUBERNETES (a pod per model) runs only up to kpo_max models: at 200 it would take ~25 min on its own.
+# how each mode grows with project size: synthetic projects of N models, 4 ways each, real scheduler
+scale runs="1" kpo_max="50":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export SCALE_SIZES="{{scale_sizes}}"
+    export AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT=300 AIRFLOW__DAG_PROCESSOR__DAG_FILE_PROCESSOR_TIMEOUT=300
+    uv run python bench/scale_parse.py {{scale_sizes}}
+    dags=()
+    for n in {{scale_sizes}}; do
+      dags+=(scale_${n}_build scale_${n}_watcher scale_${n}_kubernetes_exec)
+      if [ "$n" -le {{kpo_max}} ]; then dags+=(scale_${n}_kubernetes); fi
+    done
+    since=$(date -u '+%Y-%m-%d %H:%M:%S')
+    uv run python bench/scheduled.py --runs {{runs}} --run-timeout 3600 "${dags[@]}"
+    uv run python bench/compare.py --runs {{runs}} --since "$since" --dags "${dags[@]}" \
+      --out bench/results/compare-scale.json --title "Synthetic projects by size, four ways (whole DAG run)"
+    uv run python bench/scale_report.py
 
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":

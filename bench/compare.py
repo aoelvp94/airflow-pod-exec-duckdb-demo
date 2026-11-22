@@ -1,4 +1,4 @@
-"""Compare whole-DAG runs of the three ways to run the same dbt project against DuckDB on Kubernetes.
+"""Compare whole-DAG runs of the ways to run the same dbt project against DuckDB on Kubernetes.
 
     duckdb_dbt_exec              hand-made: seed + ONE `dbt build` exec (+ query, report)
     cosmos_dbt_kubernetes_exec   Cosmos, one task per dbt node, each an exec into the forever pod
@@ -37,12 +37,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--dags", nargs="+", default=list(DAGS), help="DAG ids to read (default: the four above)")
+    ap.add_argument("--title", default="Same dbt project, four ways (whole DAG run)")
     ap.add_argument("--since", default="", help="only count runs started at/after this UTC time (YYYY-MM-DD HH:MM:SS)")
     a = ap.parse_args()
     con = sqlite3.connect(Path(os.environ["AIRFLOW_HOME"]) / "airflow.db")
 
     results = {}
-    for dag_id in DAGS:
+    for dag_id in a.dags:
         runs = con.execute(
             "select run_id from dag_run where dag_id = ? and state = 'success' and start_date >= ? "
             "order by id desc limit ?",
@@ -73,12 +75,13 @@ def main() -> None:
     a.out.write_text(json.dumps(results, indent=2))
 
     lines = [
-        "### Same dbt project, four ways (whole DAG run)",
+        f"### {a.title}",
         "",
         "| DAG | how | tasks | runs | wall p50 s | min–max s | sum of task time p50 s |",
         "|---|---|---:|---:|---:|---:|---:|",
     ]
-    for dag_id, how in DAGS.items():
+    for dag_id in a.dags:
+        how = DAGS.get(dag_id, "")
         r = results.get(dag_id)
         if r:
             lines.append(

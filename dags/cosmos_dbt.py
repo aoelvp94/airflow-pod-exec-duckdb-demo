@@ -27,27 +27,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from kubernetes.client import (
-    V1PersistentVolumeClaimVolumeSource,
-    V1ResourceRequirements,
-    V1Volume,
-    V1VolumeMount,
-)
-
 from cosmos import DbtDag, ExecutionConfig, ProjectConfig, RenderConfig
 from cosmos.constants import ExecutionMode, LoadMode
 
-from demo_ops.settings import (
-    CONTAINER,
-    DUCKDB_WRITER_POOL,
-    IMAGE,
-    KUBERNETES_CONN_ID,
-    LAUNCHER_CONN_ID,
-    NAMESPACE,
-    POD_CPU_REQUEST,
-    POD_MEMORY_REQUEST,
-    POD_NAME,
-)
+from demo_ops.pod_args import NEW_POD_ARGS
+from demo_ops.settings import CONTAINER, DUCKDB_WRITER_POOL, KUBERNETES_CONN_ID, NAMESPACE, POD_NAME
 
 MANIFEST = Path(__file__).parents[1] / "dbt" / "target" / "manifest.json"
 PROJECT_IN_CONTAINER = "/app/dbt"
@@ -81,27 +65,7 @@ cosmos_dbt_kubernetes_exec = DbtDag(
     **COMMON,
 )
 
-# What a NEW pod gets, shared by both modes that launch pods: same image, requests and volume as the forever pod.
-NEW_POD_ARGS = {
-    "kubernetes_conn_id": LAUNCHER_CONN_ID,
-    "namespace": NAMESPACE,
-    "image": IMAGE,
-    "image_pull_policy": "IfNotPresent",
-    "container_resources": V1ResourceRequirements(
-        requests={"cpu": POD_CPU_REQUEST, "memory": POD_MEMORY_REQUEST},
-        limits={"memory": "2Gi"},
-    ),
-    "node_selector": {"kubernetes.io/os": "linux"},
-    "volumes": [
-        V1Volume(
-            name="data",
-            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name="data-duckdb-dbt-0"),
-        )
-    ],
-    "volume_mounts": [V1VolumeMount(name="data", mount_path="/data")],
-    "get_logs": True,
-    "on_finish_action": "delete_pod",
-}
+# NEW_POD_ARGS (include/demo_ops/pod_args.py): what a NEW pod gets, shared by both modes that launch pods.
 
 cosmos_dbt_kubernetes = DbtDag(
     dag_id="cosmos_dbt_kubernetes",

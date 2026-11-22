@@ -1,0 +1,62 @@
+name: scale on kind
+
+# Manual only: how each execution mode grows with the number of dbt models (just scale). Takes ~1 h.
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: "Synthetic project sizes (models), space-separated"
+        default: "10 50 200"
+      runs:
+        description: "Runs per DAG"
+        default: "1"
+      kpo_max:
+        description: "Largest size to run Cosmos KUBERNETES (a pod per model) on"
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      SCALE_SIZES: ${{ inputs.sizes }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - uses: extractions/setup-just@v4
+
+      - name: Install kind
+        uses: helm/kind-action@v1.15.2
+        with:
+          install_only: true
+
+      - name: Cluster, image (with the synthetic projects), forever pod, kubeconfigs, Airflow DB
+        run: just up
+
+      - name: Parse costs and whole runs by project size
+        run: just scale "${{ inputs.runs }}" "${{ inputs.kpo_max }}"
+
+      - name: Keep the Airflow log
+        if: always()
+        run: mkdir -p bench/results && cp .airflow/standalone.log bench/results/ 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: scale-results
+          path: bench/results/
+          if-no-files-found: ignore
+
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --context kind-duckdb-exec get pods -A -o wide || true
+          kubectl --context kind-duckdb-exec -n duckdb get events --sort-by=.lastTimestamp || true
