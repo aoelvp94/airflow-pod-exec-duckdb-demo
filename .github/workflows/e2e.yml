@@ -66,6 +66,12 @@ jobs:
       - name: Cancel an exec mid-run (on_kill and SIGKILL), then retry
         run: just cancel
 
+      - name: Exec connection that hangs without closing
+        run: just hang
+
+      - name: Concurrent dbt builds, shared project dir vs one workspace each
+        run: just parallel --rounds 5
+
       - name: Burst test
         run: just burst "$BURST_PODS"
 

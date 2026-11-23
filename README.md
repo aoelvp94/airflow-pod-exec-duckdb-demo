@@ -31,6 +31,8 @@ just bench 10  # exec vs pod-per-task latency + at-scale estimate
 just compare 3 # same dbt project: hand-made exec vs Cosmos KUBERNETES_EXEC vs Cosmos KUBERNETES
 just burst 50  # 50 pods created at once
 just cancel    # cut an exec mid-run: does dbt stop in the pod?
+just hang      # the exec connection hangs without closing
+just parallel  # concurrent dbt builds: shared target/ vs a workspace each
 just scale     # synthetic projects of 10/50/200 models, four ways each (CI: manual workflow "scale on kind")
 just down
 ```
@@ -189,7 +191,41 @@ the command keeps running until it finishes. With DuckDB, the orphaned process k
 retry fails. With a warehouse that has no lock, the retry would run alongside the first attempt. Cosmos'
 `KUBERNETES_EXEC` operators inherit this `on_kill`. Pod-per-task modes don't have the problem, because deleting the
 pod kills the process. Setting `retry_delay` longer than your longest run avoids the lock error, but it doesn't stop
-the orphan.
+the orphan. The PR's docs already warn about this ("does not guarantee the remote dbt process stops").
+
+### A hung exec connection blocks the task until it times out
+
+**`just hang`** ([`bench/hang.py`](bench/hang.py)) sends the exec through a local TCP proxy. Mid-run, the proxy
+stops moving bytes in both directions but keeps both sockets open, the way a silent network partition does.
+Locally:
+
+| dbt in the pod | `execute()` on its own | `on_kill()` while hung | retry once the network is back |
+|---|---|---|---|
+| finished 36 s after the freeze | still blocked after 120 s | returned in 0.1 s | succeeded |
+
+dbt finishes but its exit code never reaches Airflow, so the task can't tell whether the run worked. The operator's
+read loop has no idle timeout and sends no pings, so the task waits for as long as the connection looks open (with
+Linux's TCP keepalive defaults, that's hours). Set `execution_timeout` on exec tasks. Airflow then calls `on_kill()`,
+which unblocks the task right away. The error the task fails with is a `TypeError` from the closed client rather
+than a clear message.
+
+### Parallel runs need a workspace each
+
+**`just parallel`** ([`bench/parallel.py`](bench/parallel.py)) runs 4 `dbt build`s at once in the pod, for several
+rounds, in two layouts. In the first, all four share `/app/dbt`'s `target/` and `logs/`. In the second, each gets its
+own `DBT_TARGET_PATH` and `DBT_LOG_PATH`. Each process writes its own DuckDB file, because DuckDB allows only one
+writer per file. Locally, 3 rounds:
+
+| layout | failed | full parses after round 1 | median time |
+|---|---:|---:|---:|
+| shared `target/` and `logs/` | 0 of 12 | 6 of 8 | 5.0 s |
+| a workspace each | 0 of 12 | 0 of 8 | 4.1 s |
+
+No run failed and nothing was visibly corrupted in these rounds. The shared layout keeps throwing away the
+partial-parse cache, though. Each process has a different `DUCKDB_PATH`, so a different profile hash, and the last
+writer of `target/partial_parse.msgpack` wins, the same effect as different `ProjectConfig.env_vars`. With a
+workspace each, every process keeps its own cache. A handful of rounds can't rule out the corruption the PR's docs
+warn about, so the docs' advice stands: independent target and log paths for anything that runs concurrently.
 
 Don't benchmark on a laptop with the lid closed: macOS sleeps on battery even under `caffeinate`, and tasks
 come out at 30 s or 1,000 s. CI is the reliable place to run it.
@@ -200,7 +236,7 @@ come out at 30 s or 1,000 s. CI is the reliable place to run it.
 dags/duckdb_dbt_exec.py          the DAG (exec tasks + XCom)
 dags/bench_exec_vs_kpo.py        benchmark DAG: exec vs KubernetesPodOperator, same work
 dags/cosmos_dbt.py               Cosmos DbtDags: KUBERNETES_EXEC (PR #3027) and KUBERNETES
-bench/                           report, burst, cancel test, at-scale estimator, run checker
+bench/                           report, burst, cancel/hang/parallel tests, scale, estimator
 .github/workflows/e2e.yml        CI: everything above on kind
 include/demo_ops/settings.py     conn id, pod, pool, dbt flags
 include/demo_ops/aks_pod_exec.py home-made AksPodExecOperator (Airflow has no AKS flavour)

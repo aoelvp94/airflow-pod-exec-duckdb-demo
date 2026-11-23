@@ -117,6 +117,14 @@ compare-scheduled runs="3":
 cancel *args:
     uv run python bench/cancel.py {{args}}
 
+# freeze the exec connection mid-run without closing it (no FIN/RST): does execute() notice? does on_kill help?
+hang *args:
+    uv run python bench/hang.py {{args}}
+
+# P concurrent dbt builds in the pod: shared target/logs vs one workspace each
+parallel *args:
+    uv run python bench/parallel.py {{args}}
+
 # KUBERNETES (a pod per model) runs only up to kpo_max models: at 200 it would take ~25 min on its own.
 # how each mode grows with project size: synthetic projects of N models, 4 ways each, real scheduler
 scale runs="1" kpo_max="50":
