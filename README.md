@@ -197,11 +197,11 @@ the orphan. The PR's docs already warn about this ("does not guarantee the remot
 
 **`just hang`** ([`bench/hang.py`](bench/hang.py)) sends the exec through a local TCP proxy. Mid-run, the proxy
 stops moving bytes in both directions but keeps both sockets open, the way a silent network partition does.
-Locally:
+On CI:
 
 | dbt in the pod | `execute()` on its own | `on_kill()` while hung | retry once the network is back |
 |---|---|---|---|
-| finished 36 s after the freeze | still blocked after 120 s | returned in 0.1 s | succeeded |
+| finished 66 s after the freeze | still blocked after 150 s | returned in ~1 s | succeeded |
 
 dbt finishes but its exit code never reaches Airflow, so the task can't tell whether the run worked. The operator's
 read loop has no idle timeout and sends no pings, so the task waits for as long as the connection looks open (with
@@ -214,12 +214,12 @@ than a clear message.
 **`just parallel`** ([`bench/parallel.py`](bench/parallel.py)) runs 4 `dbt build`s at once in the pod, for several
 rounds, in two layouts. In the first, all four share `/app/dbt`'s `target/` and `logs/`. In the second, each gets its
 own `DBT_TARGET_PATH` and `DBT_LOG_PATH`. Each process writes its own DuckDB file, because DuckDB allows only one
-writer per file. Locally, 3 rounds:
+writer per file. On CI, 5 rounds:
 
 | layout | failed | full parses after round 1 | median time |
 |---|---:|---:|---:|
-| shared `target/` and `logs/` | 0 of 12 | 6 of 8 | 5.0 s |
-| a workspace each | 0 of 12 | 0 of 8 | 4.1 s |
+| shared `target/` and `logs/` | 0 of 20 | 12 of 16 | 5.8 s |
+| a workspace each | 0 of 20 | 0 of 16 | 4.3 s |
 
 No run failed and nothing was visibly corrupted in these rounds. The shared layout keeps throwing away the
 partial-parse cache, though. Each process has a different `DUCKDB_PATH`, so a different profile hash, and the last
