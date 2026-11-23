@@ -31,6 +31,8 @@ plt.rcParams.update({
 
 
 def fmt(v: float) -> str:
+    if v >= 100:
+        return f"{v:.0f} s"
     return f"{v:.1f} s" if v >= 10 else f"{v:.2f} s".replace(".00 s", " s")
 
 
@@ -122,17 +124,65 @@ def three_ways(compare: dict, out: Path, source: str) -> Path:
     return path
 
 
+def scale(data: dict, out: Path, source: str) -> Path:
+    """Whole run vs number of models. Color = who owns the pod (as in every chart here); line style tells
+    the two modes of each owner apart, and every line is labeled at its end, so color is never alone."""
+    sizes = data["sizes"]
+    series = [
+        # label, key, color, line style, label offset (points)
+        ("Cosmos KUBERNETES", "kubernetes", POD, "-", (0, 26)),
+        ("Cosmos KUBERNETES_EXEC", "kubernetes_exec", EXEC, "-", (8, 0)),
+        ("Cosmos WATCHER_KUBERNETES", "watcher", POD, "--", (8, 10)),
+        ("One dbt build via PodExec", "build", EXEC, "--", (8, 6)),
+    ]
+    fig, ax = plt.subplots(figsize=(8, 4.6), dpi=200)
+    fig.subplots_adjust(left=0.1, right=0.7, top=0.8, bottom=0.2)
+    ymax = max(v for _, k, *_ in series for v in data["wall_p50_s"][k].values() if v is not None)
+    for label, key, color, style, offset in series:
+        pts = [(n, data["wall_p50_s"][key][str(n)]) for n in sizes if data["wall_p50_s"][key].get(str(n)) is not None]
+        xs, ys = zip(*pts)
+        ax.plot(xs, ys, color=color, linestyle=style, linewidth=2, marker="o", markersize=5,
+                markeredgecolor=SURFACE, markeredgewidth=1.5)
+        ax.annotate(f"{label}\n{fmt(ys[-1])} at {xs[-1]} models", (xs[-1], ys[-1]), xytext=offset,
+                    textcoords="offset points", va="center", ha="left" if offset[0] > 0 else "center", fontsize=8.5, color=TEXT, annotation_clip=False)
+    ax.set_xlim(0, max(sizes) * 1.02)
+    ax.set_ylim(0, ymax * 1.08)
+    ax.set_xticks(sizes)
+    ax.set_xlabel("dbt models in the project")
+    ax.yaxis.grid(True, color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(length=0)
+    ax.yaxis.set_major_formatter(lambda y, _: f"{y:g} s")
+    w = data["wall_p50_s"]
+    big = max(sizes)
+    ratio = w["kubernetes_exec"][str(big)] / w["watcher"][str(big)]
+    headline(fig, f"At {big} models, exec per node takes {ratio:.0f}× longer than the watcher",
+             f"Whole DAG run, 1 run per point; KUBERNETES only up to 50 models · {source}")
+    legend(fig)
+    path = out / "scale.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--latency", type=Path, required=True)
-    ap.add_argument("--compare", type=Path, required=True)
+    ap.add_argument("--latency", type=Path)
+    ap.add_argument("--compare", type=Path)
+    ap.add_argument("--scale", type=Path, help="bench/results/scale.json from just scale")
     ap.add_argument("--source", default="GitHub Actions ubuntu-latest, single-node kind, image cached")
     ap.add_argument("--compare-source", default=None, help="subtitle for the comparison chart, if different")
     ap.add_argument("--out", type=Path, default=Path("docs/img"))
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    print(per_task(json.loads(a.latency.read_text()), a.out, a.source))
-    print(three_ways(json.loads(a.compare.read_text()), a.out, a.compare_source or a.source))
+    if a.latency:
+        print(per_task(json.loads(a.latency.read_text()), a.out, a.source))
+    if a.compare:
+        print(three_ways(json.loads(a.compare.read_text()), a.out, a.compare_source or a.source))
+    if a.scale:
+        print(scale(json.loads(a.scale.read_text()), a.out, a.compare_source or a.source))
 
 
 if __name__ == "__main__":

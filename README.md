@@ -91,6 +91,40 @@ manifest baked into the image. `pyproject.toml` pins the PR's head commit until 
   throwaway file. That only works here because kind has a single node (ReadWriteOnce is per node). On a real
   cluster you'd need ReadWriteMany storage or a database with a server.
 
+### How it grows with project size
+
+`just scale` ([`dags/cosmos_scale.py`](dags/cosmos_scale.py)) runs synthetic projects of 10, 50 and 200 models
+([`scale/gen.py`](scale/gen.py): layers 10 wide, each model a 10k-row table, so the time is dbt and Airflow, not
+DuckDB). Each project runs four ways through a real scheduler. These numbers come from the manual CI workflow
+*scale on kind*, one run per point:
+
+![Whole run by number of models](docs/img/scale.png)
+
+| whole run | 10 models | 50 models | 200 models | per model |
+|---|---:|---:|---:|---:|
+| one `dbt build` exec | 8.5 s | 6.2 s | 11.7 s | ~0 s |
+| Cosmos `WATCHER_KUBERNETES` | 19.0 s | 46.8 s | 138.9 s | 0.6 s |
+| Cosmos `KUBERNETES_EXEC` | 49.6 s | 249.6 s | 1,010 s | 5.1 s |
+| Cosmos `KUBERNETES` | 87.7 s | 431.0 s | not run (~29 min extrapolated) | 8.6 s |
+
+| inside the pod (median of 3) | 10 models | 50 models | 200 models |
+|---|---:|---:|---:|
+| `dbt --version` | 2.04 s | 2.08 s | 2.09 s |
+| `dbt parse` (partial, pre-parsed) | 2.74 s | 2.82 s | 2.91 s |
+| `dbt parse --no-partial-parse` (full) | 3.80 s | 3.92 s | 4.40 s |
+
+- **Exec per node grows linearly, about 5 s per model.** Each node pays a dbt start-up (~2 s), loading the
+  partial parse and the exec itself, and the one-slot pool runs them one at a time. At 200 models that's 7× the
+  watcher and 87× a single build.
+- **The watcher grows slowly** (0.6 s per model). dbt starts once and runs with threads, so most of the
+  growth comes from following the per-node sensors.
+- **Parsing isn't what grows here.** A full parse of 200 models took 4.4 s, against 3.8 s for 10. These
+  models are plain SQL with no YAML, macros or packages, though, and a real project of the same size parses
+  slower. The point is that what grows is the dbt *process* started once per node, not the parse.
+- **The pool is a DuckDB constraint.** With a warehouse that takes many writers, exec per node could run up to a
+  layer's width (10 here) at once, which would cut its time a lot. That hasn't been measured.
+- One run per point, so small differences are noise (the 50-model build was faster than the 10-model one).
+
 ## Measuring it
 
 Three tools, from measured to estimated:
