@@ -117,6 +117,15 @@ compare-scheduled runs="3":
 cancel *args:
     uv run python bench/cancel.py {{args}}
 
+# where a Cosmos KUBERNETES_EXEC task spends its time: one run of an N-model project, broken into segments
+profile-exec size="50":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PROFILE_EXEC_SIZE={{size}}
+    uv run python bench/profile_exec.py install
+    uv run python bench/scheduled.py --runs 1 --run-timeout 3600 profile_{{size}}_kubernetes_exec
+    uv run python bench/profile_exec.py report --dag profile_{{size}}_kubernetes_exec
+
 # freeze the exec connection mid-run without closing it (no FIN/RST): does execute() notice? does on_kill help?
 hang *args:
     uv run python bench/hang.py {{args}}

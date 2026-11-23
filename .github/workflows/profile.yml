@@ -1,0 +1,51 @@
+name: profile exec on kind
+
+# Manual only: where a Cosmos KUBERNETES_EXEC task spends its time (just profile-exec). Takes ~15 min.
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: "Synthetic project size (models): 10, 50 or 200"
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - uses: extractions/setup-just@v4
+
+      - name: Install kind
+        uses: helm/kind-action@v1.15.2
+        with:
+          install_only: true
+
+      - name: Cluster, image, forever pod, kubeconfigs, Airflow DB
+        run: just up
+
+      - name: Profile one KUBERNETES_EXEC run
+        run: just profile-exec "${{ inputs.size }}"
+
+      - name: Keep the Airflow logs
+        if: always()
+        run: |
+          mkdir -p bench/results
+          cp .airflow/standalone.log bench/results/ 2>/dev/null || true
+          cp -r .airflow/logs bench/results/airflow-logs 2>/dev/null || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: profile-results
+          path: bench/results/
+          if-no-files-found: ignore
