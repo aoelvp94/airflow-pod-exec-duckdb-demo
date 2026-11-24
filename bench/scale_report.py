@@ -15,6 +15,7 @@ RESULTS = Path(__file__).parent / "results"
 MODES = [
     ("build", "one `dbt build` exec"),
     ("watcher", "Cosmos WATCHER_KUBERNETES"),
+    ("watcher_exec", "watcher over exec (prototype)"),
     ("kubernetes_exec", "Cosmos KUBERNETES_EXEC"),
     ("kubernetes", "Cosmos KUBERNETES"),
 ]

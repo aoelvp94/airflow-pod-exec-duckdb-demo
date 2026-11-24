@@ -24,6 +24,7 @@ DAGS = {
     "cosmos_dbt_kubernetes_exec": "Cosmos KUBERNETES_EXEC: exec per dbt node",
     "cosmos_dbt_kubernetes": "Cosmos KUBERNETES: new pod per dbt node",
     "cosmos_dbt_watcher_kubernetes": "Cosmos WATCHER_KUBERNETES: one new pod per DAG run",
+    "cosmos_dbt_watcher_exec": "PROTOTYPE watcher over exec: one dbt build exec per DAG run",
 }
 OUT = Path(__file__).parent / "results" / "compare.json"
 

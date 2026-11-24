@@ -8,6 +8,8 @@ Cosmos DbtDags for the comparisons: the same dbt project, one Airflow task per d
                       ReadWriteOnce is per node).
 * WATCHER_KUBERNETES  (released): ONE new pod per DAG run runs the whole `dbt build` (the producer); the per-node
                       tasks are deferrable sensors that read its results. Pod start-up once per run.
+* watcher_exec        PROTOTYPE (include/demo_ops/watcher_exec.py): the watcher, with its producer's `dbt build`
+                      run by exec in the existing pod. No pod per run, one dbt process per run.
 
 Every DAG lives in a file of its own (dags/cosmos_dbt_*.py, and the scale_* stubs `just scale` writes): Airflow
 re-parses a task's DAG file before running the task, so a file holding many DbtDags makes every task slower.
@@ -20,6 +22,7 @@ writer there anyway. Schedule: manual (comparison). Nothing downstream.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,6 +32,7 @@ from cosmos import DbtDag, ExecutionConfig, ProjectConfig, RenderConfig
 from cosmos.constants import ExecutionMode, LoadMode
 
 from demo_ops.pod_args import NEW_POD_ARGS
+from demo_ops.watcher_exec import exec_producer
 from demo_ops.settings import CONTAINER, DBT, DUCKDB_WRITER_POOL, KUBERNETES_CONN_ID, NAMESPACE, POD_NAME
 
 REPO = Path(__file__).parents[2]
@@ -51,6 +55,13 @@ MODES = {
         # producer: plain KPO, not deferred; consumers: Cosmos's default deferrable sensors
         {**NEW_POD_ARGS, "labels": {"app": "cosmos-watcher"}, "log_events_on_failure": True},
         ["pod-per-run"],
+    ),
+    # Same as the watcher; exec_producer() swaps in the exec producer while the DAG is built. The sensors keep
+    # the pod args they're built with; the producer drops them and execs into the forever pod instead.
+    "watcher_exec": (
+        ExecutionMode.WATCHER_KUBERNETES,
+        {**NEW_POD_ARGS, "labels": {"app": "cosmos-watcher"}, "log_events_on_failure": True},
+        ["pod-exec", "prototype"],
     ),
 }
 DAG_ARGS = dict(
@@ -78,21 +89,23 @@ def cosmos_dag(
     execution = {"execution_mode": execution_mode, "dbt_project_path": project_dir}
     if dbt_executable_path:
         execution["dbt_executable_path"] = dbt_executable_path
-    return DbtDag(
-        dag_id=dag_id,
-        project_config=ProjectConfig(manifest_path=manifest, project_name=project_name),
-        render_config=RenderConfig(load_method=LoadMode.DBT_MANIFEST),
-        execution_config=ExecutionConfig(**execution),
-        operator_args=operator_args,
-        dagrun_timeout=timedelta(minutes=timeout_min),
-        tags=["cosmos", *mode_tags, *(tags or [])],
-        **DAG_ARGS,
-    )
+    # watcher_exec: built as WATCHER_KUBERNETES while the exec producer is swapped in (demo_ops/watcher_exec.py)
+    with exec_producer(**EXEC_ARGS) if mode == "watcher_exec" else nullcontext():
+        return DbtDag(
+            dag_id=dag_id,
+            project_config=ProjectConfig(manifest_path=manifest, project_name=project_name),
+            render_config=RenderConfig(load_method=LoadMode.DBT_MANIFEST),
+            execution_config=ExecutionConfig(**execution),
+            operator_args=operator_args,
+            dagrun_timeout=timedelta(minutes=timeout_min),
+            tags=["cosmos", *mode_tags, *(tags or [])],
+            **DAG_ARGS,
+        )
 
 
 def demo_dag(mode: str) -> DbtDag:
     """The demo project (dbt/), as cosmos_dbt_<mode>."""
-    name = "cosmos_dbt_watcher_kubernetes" if mode == "watcher" else f"cosmos_dbt_{mode}"
+    name = {"watcher": "cosmos_dbt_watcher_kubernetes", "watcher_exec": "cosmos_dbt_watcher_exec"}.get(mode, f"cosmos_dbt_{mode}")
     return cosmos_dag(
         name, mode, project_name="duckdb_exec_demo", project_dir="/app/dbt",
         manifest=REPO / "dbt" / "target" / "manifest.json", tags=["dbt", "duckdb"],

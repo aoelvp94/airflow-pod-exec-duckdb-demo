@@ -95,6 +95,7 @@ def three_ways(compare: dict, out: Path, source: str) -> Path:
         ("Cosmos KUBERNETES_EXEC\n(exec per dbt node, 8 tasks)", "cosmos_dbt_kubernetes_exec", EXEC),
         ("Cosmos KUBERNETES\n(new pod per dbt node, 8 tasks)", "cosmos_dbt_kubernetes", POD),
         ("Cosmos WATCHER_KUBERNETES\n(1 new pod per run, 1 dbt build)", "cosmos_dbt_watcher_kubernetes", POD),
+        ("Watcher over exec (prototype)\n(1 dbt build exec per run)", "cosmos_dbt_watcher_exec", EXEC),
     ]
     rows = [r for r in rows if r[1] in compare]  # the watcher only exists in scheduled comparisons
     fig, ax = plt.subplots(figsize=(8, 2.6 + 0.6 * len(rows)), dpi=200)
@@ -111,14 +112,14 @@ def three_ways(compare: dict, out: Path, source: str) -> Path:
     speedup = compare["cosmos_dbt_kubernetes"]["wall_p50_s"] / compare["cosmos_dbt_kubernetes_exec"]["wall_p50_s"]
     runs = compare["cosmos_dbt_kubernetes_exec"]["runs"]
     title = (
-        "Same dbt project, four ways, through a real scheduler"
-        if len(rows) == 4
+        f"Same dbt project, {len(rows)} ways, through a real scheduler"
+        if len(rows) >= 4
         else f"Same dbt project: exec per node runs {speedup:.1f}× faster than a pod per node"
     )
     headline(fig, title,
              f"Whole DAG run, median of {runs} (whiskers: fastest–slowest) · {source}")
     legend(fig)
-    path = out / ("cosmos_four_ways.png" if len(rows) == 4 else "cosmos_three_ways.png")
+    path = out / ("cosmos_four_ways.png" if len(rows) >= 4 else "cosmos_three_ways.png")  # name kept: linked
     fig.savefig(path)
     plt.close(fig)
     return path
@@ -133,12 +134,15 @@ def scale(data: dict, out: Path, source: str) -> Path:
         ("Cosmos KUBERNETES", "kubernetes", POD, "-", (0, 26)),
         ("Cosmos KUBERNETES_EXEC", "kubernetes_exec", EXEC, "-", (8, 0)),
         ("Cosmos WATCHER_KUBERNETES", "watcher", POD, "--", (8, 10)),
+        ("Watcher over exec (prototype)", "watcher_exec", EXEC, ":", (8, -14)),
         ("One dbt build via PodExec", "build", EXEC, "--", (8, 6)),
     ]
     fig, ax = plt.subplots(figsize=(8, 4.6), dpi=200)
     fig.subplots_adjust(left=0.1, right=0.7, top=0.8, bottom=0.2)
-    ymax = max(v for _, k, *_ in series for v in data["wall_p50_s"][k].values() if v is not None)
+    ymax = max(v for _, k, *_ in series if k in data["wall_p50_s"] for v in data["wall_p50_s"][k].values() if v is not None)
     for label, key, color, style, offset in series:
+        if key not in data["wall_p50_s"]:
+            continue
         pts = [(n, data["wall_p50_s"][key][str(n)]) for n in sizes if data["wall_p50_s"][key].get(str(n)) is not None]
         xs, ys = zip(*pts)
         ax.plot(xs, ys, color=color, linestyle=style, linewidth=2, marker="o", markersize=5,

@@ -110,7 +110,7 @@ compare-scheduled runs="3":
     set -euo pipefail
     since=$(date -u '+%Y-%m-%d %H:%M:%S')
     uv run python bench/scheduled.py --runs {{runs}} \
-      duckdb_dbt_exec cosmos_dbt_kubernetes_exec cosmos_dbt_kubernetes cosmos_dbt_watcher_kubernetes
+      duckdb_dbt_exec cosmos_dbt_kubernetes_exec cosmos_dbt_kubernetes cosmos_dbt_watcher_kubernetes cosmos_dbt_watcher_exec
     uv run python bench/compare.py --runs {{runs}} --since "$since" --out bench/results/compare-scheduled.json
 
 # cut an exec mid-run (on_kill, then SIGKILL of the client): does dbt keep running in the pod? does a retry work?
@@ -145,7 +145,7 @@ scale runs="1" kpo_max="50":
     uv run python bench/scale_parse.py {{scale_sizes}}
     dags=()
     for n in {{scale_sizes}}; do
-      dags+=(scale_${n}_build scale_${n}_watcher scale_${n}_kubernetes_exec)
+      dags+=(scale_${n}_build scale_${n}_watcher scale_${n}_watcher_exec scale_${n}_kubernetes_exec)
       if [ "$n" -le {{kpo_max}} ]; then dags+=(scale_${n}_kubernetes); fi
     done
     since=$(date -u '+%Y-%m-%d %H:%M:%S')
@@ -153,6 +153,10 @@ scale runs="1" kpo_max="50":
     uv run python bench/compare.py --runs {{runs}} --since "$since" --dags "${dags[@]}" \
       --out bench/results/compare-scale.json --title "Synthetic projects by size, four ways (whole DAG run)"
     uv run python bench/scale_report.py
+
+# run given DAGs n times each through a real local scheduler: just scheduled 1 cosmos_dbt_watcher_exec
+scheduled runs +dags:
+    uv run python bench/scheduled.py --runs {{runs}} --run-timeout 1800 {{dags}}
 
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":
