@@ -40,7 +40,7 @@ jobs:
         run: |
           mkdir -p bench/results
           cp .airflow/standalone.log bench/results/ 2>/dev/null || true
-          cp -r .airflow/logs bench/results/airflow-logs 2>/dev/null || true
+          tar czf bench/results/airflow-logs.tgz -C .airflow logs 2>/dev/null || true  # task log paths contain ':'
 
       - name: Upload results
         if: always()

@@ -139,8 +139,9 @@ parallel *args:
 scale runs="1" kpo_max="50":
     #!/usr/bin/env bash
     set -euo pipefail
-    export SCALE_SIZES="{{scale_sizes}}"
     export AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT=300 AIRFLOW__DAG_PROCESSOR__DAG_FILE_PROCESSOR_TIMEOUT=300
+    uv run python bench/scale_stubs.py write {{scale_sizes}}  # one DAG per file
+    trap 'uv run python bench/scale_stubs.py clean' EXIT
     uv run python bench/scale_parse.py {{scale_sizes}}
     dags=()
     for n in {{scale_sizes}}; do

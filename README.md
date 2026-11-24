@@ -69,7 +69,7 @@ writer needs the file to itself, which is why writers share a one-slot pool.
 [astronomer-cosmos#3027](https://github.com/astronomer/astronomer-cosmos/pull/3027) (open, unreleased) adds
 `ExecutionMode.KUBERNETES_EXEC`: Cosmos keeps one Airflow task per dbt node, but runs each one with
 `KubernetesPodExecOperator` in an existing pod instead of starting a new one. That's this repo's pattern, packaged
-in Cosmos. [`dags/cosmos_dbt.py`](dags/cosmos_dbt.py) renders the same dbt project both ways from the
+in Cosmos. [`include/demo_ops/cosmos_dags.py`](include/demo_ops/cosmos_dags.py) (one file per DAG in `dags/cosmos_dbt_*.py`) renders the same dbt project both ways from the
 manifest baked into the image. `pyproject.toml` pins the PR's head commit until it ships in a release.
 
 `just compare 3`, laptop with the lid open, same pod/image/pool for all three, tasks one after another:
@@ -95,7 +95,7 @@ manifest baked into the image. `pyproject.toml` pins the PR's head commit until 
 
 ### How it grows with project size
 
-`just scale` ([`dags/cosmos_scale.py`](dags/cosmos_scale.py)) runs synthetic projects of 10, 50 and 200 models
+`just scale` ([`bench/scale_stubs.py`](bench/scale_stubs.py), one DAG file per size and mode) runs synthetic projects of 10, 50 and 200 models
 ([`scale/gen.py`](scale/gen.py): layers 10 wide, each model a 10k-row table, so the time is dbt and Airflow, not
 DuckDB). Each project runs four ways through a real scheduler. These numbers come from the manual CI workflow
 *scale on kind*, one run per point:
@@ -235,7 +235,7 @@ come out at 30 s or 1,000 s. CI is the reliable place to run it.
 ```
 dags/duckdb_dbt_exec.py          the DAG (exec tasks + XCom)
 dags/bench_exec_vs_kpo.py        benchmark DAG: exec vs KubernetesPodOperator, same work
-dags/cosmos_dbt.py               Cosmos DbtDags: KUBERNETES_EXEC (PR #3027) and KUBERNETES
+dags/cosmos_dbt_*.py             Cosmos DbtDags, one per file: KUBERNETES_EXEC (PR #3027), KUBERNETES, watcher
 bench/                           report, burst, cancel/hang/parallel tests, scale, estimator
 .github/workflows/e2e.yml        CI: everything above on kind
 include/demo_ops/settings.py     conn id, pod, pool, dbt flags

@@ -9,3 +9,4 @@ dbt/logs/
 bench/results/
 drafts/
 scale/target/
+dags/scale_generated/
