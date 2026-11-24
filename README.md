@@ -104,28 +104,56 @@ DuckDB). Each project runs four ways through a real scheduler. These numbers com
 
 | whole run | 10 models | 50 models | 200 models | per model |
 |---|---:|---:|---:|---:|
-| one `dbt build` exec | 8.5 s | 6.2 s | 11.7 s | ~0 s |
-| Cosmos `WATCHER_KUBERNETES` | 19.0 s | 46.8 s | 138.9 s | 0.6 s |
-| Cosmos `KUBERNETES_EXEC` | 49.6 s | 249.6 s | 1,010 s | 5.1 s |
-| Cosmos `KUBERNETES` | 87.7 s | 431.0 s | not run (~29 min extrapolated) | 8.6 s |
+| one `dbt build` exec | 5.2 s | 3.5 s | 6.2 s | ~0 s |
+| Cosmos `WATCHER_KUBERNETES` | 18.8 s | 26.4 s | 72.6 s | 0.3 s |
+| Cosmos `KUBERNETES_EXEC` | 29.5 s | 150.7 s | 638.4 s | 3.2 s |
+| Cosmos `KUBERNETES` | 59.3 s | 299.9 s | not run (~20 min extrapolated) | 6.0 s |
 
 | inside the pod (median of 3) | 10 models | 50 models | 200 models |
 |---|---:|---:|---:|
-| `dbt --version` | 2.04 s | 2.08 s | 2.09 s |
-| `dbt parse` (partial, pre-parsed) | 2.74 s | 2.82 s | 2.91 s |
-| `dbt parse --no-partial-parse` (full) | 3.80 s | 3.92 s | 4.40 s |
+| `dbt --version` | 1.41 s | 1.37 s | 1.39 s |
+| `dbt parse` (partial, pre-parsed) | 1.78 s | 1.84 s | 1.87 s |
+| `dbt parse --no-partial-parse` (full) | 2.57 s | 2.62 s | 3.00 s |
 
-- **Exec per node grows linearly, about 5 s per model.** Each node pays a dbt start-up (~2 s), loading the
-  partial parse and the exec itself, and the one-slot pool runs them one at a time. At 200 models that's 7× the
-  watcher and 87× a single build.
-- **The watcher grows slowly** (0.6 s per model). dbt starts once and runs with threads, so most of the
+- **Exec per node grows linearly, about 3.2 s per model.** The one-slot pool runs the nodes one at a time,
+  and each one starts a dbt process (the breakdown below). At 200 models that's 8.8× the watcher and 100× a
+  single build.
+- **The watcher grows slowly** (0.3 s per model). dbt starts once and runs with threads, so most of the
   growth comes from following the per-node sensors.
-- **Parsing isn't what grows here.** A full parse of 200 models took 4.4 s, against 3.8 s for 10. These
+- **Parsing isn't what grows here.** A full parse of 200 models took 3.0 s, against 2.6 s for 10. These
   models are plain SQL with no YAML, macros or packages, though, and a real project of the same size parses
   slower. The point is that what grows is the dbt *process* started once per node, not the parse.
 - **The pool is a DuckDB constraint.** With a warehouse that takes many writers, exec per node could run up to a
   layer's width (10 here) at once, which would cut its time a lot. That hasn't been measured.
 - One run per point, so small differences are noise (the 50-model build was faster than the 10-model one).
+- **One DAG per file matters.** Airflow re-parses a task's DAG file before running the task. A first version of
+  this benchmark kept all twelve scale DAGs in one file, and every per-node task paid ~1.5 s for it: exec per node
+  took 1,010 s at 200 models and the watcher 139 s. Runner speed also varies between CI runs (±30% on the same
+  code), so only compare numbers from the same run.
+
+#### Where an exec-per-node task spends its time
+
+`just profile-exec 50` ([`bench/profile_exec.py`](bench/profile_exec.py), manual workflow *profile exec on kind*)
+runs the 50-model project through `KUBERNETES_EXEC` with dbt wrapped by a script that logs when dbt starts and exits.
+Then it splits every task's log into segments. Median of 50 tasks on CI:
+
+| segment | s |
+|---|---:|
+| Airflow re-parses the DAG file | 0.34 |
+| operator setup, read the pod | 0.03 |
+| exec connection + process spawn | 0.03 |
+| **dbt CLI start-up (imports)** | **1.36** |
+| **adapter + load the partial parse** | **0.58** |
+| connection + run setup | 0.10 |
+| the model itself | 0.10 |
+| **dbt exit (writes artifacts)** | **0.31** |
+| **whole task** | **2.86** |
+| gap before the next task | 0.38 |
+
+86% of each task is a dbt process starting up and shutting down. The exec and the pod add 0.06 s, so the pod's
+configuration isn't what makes this mode slower, and neither is exec. To get near the watcher, exec mode would have to
+stop starting one dbt process per node: one `dbt build` per run with per-node tasks that follow it, the way the
+watcher does, but run through exec in the existing pod.
 
 ## Measuring it
 
