@@ -155,6 +155,34 @@ configuration isn't what makes this mode slower, and neither is exec. To get nea
 stop starting one dbt process per node: one `dbt build` per run with per-node tasks that follow it, the way the
 watcher does, but run through exec in the existing pod.
 
+#### Prototype: the watcher over exec
+
+[`include/demo_ops/watcher_exec.py`](include/demo_ops/watcher_exec.py) does exactly that, as a prototype. It keeps
+Cosmos's `WATCHER_KUBERNETES` and swaps only its producer. The new producer runs the same
+`dbt build --log-format json` through `KubernetesPodExecOperator` in the existing pod and feeds every stdout line to
+Cosmos's own watcher parser, which pushes each node's status to XCom. The per-node sensors are Cosmos's, unchanged.
+DAG `cosmos_dbt_watcher_exec`; mode `watcher_exec` in `just scale`.
+
+Checked end to end. Every node's status reached XCom, and the sensors read it from there without starting any pod
+or falling back to running the node themselves.
+
+Both watchers interleaved, 3 runs each, 50-model project, on a laptop with other workloads using most of the CPU.
+The two modes compare fairly with each other here, but the absolute numbers aren't meaningful:
+
+| 50 models, median of 3 | whole run | producer (`dbt build`) | producer, min–max | sensors after the producer |
+|---|---:|---:|---:|---:|
+| Cosmos `WATCHER_KUBERNETES` | 114.1 s | 37.0 s | 23.7–103.0 s | 77.0 s |
+| watcher over exec (prototype) | 111.0 s | 24.9 s | 23.9–25.5 s | 85.5 s |
+
+- **Whole run: a tie.** The difference is within the noise.
+- **The exec producer is faster and steady.** It skips creating a pod, the part that swung from seconds to over a
+  minute here. Image pulls and new nodes make that part bigger in a real cluster; that isn't measured.
+- **Both are dominated by the sensor cascade.** A layer of sensors starts only after the previous one finishes, and
+  each sensor spends ~10 s starting as a task, against ~24 s for the whole `dbt build`. To get close to a single
+  `dbt build`, the sensors would have to get cheaper, whichever way the producer runs.
+- Known gaps: a sensor's retry fallback would still start a pod, cancelling the producer leaves dbt running in the
+  pod (as with any exec), and the failure path (a model that fails) hasn't been tested.
+
 ## Measuring it
 
 Three tools, from measured to estimated:

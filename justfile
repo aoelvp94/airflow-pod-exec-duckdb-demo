@@ -158,6 +158,11 @@ scale runs="1" kpo_max="50":
 scheduled runs +dags:
     uv run python bench/scheduled.py --runs {{runs}} --run-timeout 1800 {{dags}}
 
+# any repo script with this repo's env, arguments passed as given: just py bench/compare.py --since "2026-11-26 15:00:00"
+[positional-arguments]
+py *args:
+    uv run python "$@"
+
 # burst: create many pods at once and time scheduling/start/finish
 burst pods="30":
     uv run python bench/burst.py --pods {{pods}}
