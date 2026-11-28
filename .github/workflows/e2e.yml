@@ -1,9 +1,7 @@
 name: e2e on kind
 
+# Manual only (~45 min): run it from the Actions tab or `gh workflow run e2e.yml`.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       bench_n:

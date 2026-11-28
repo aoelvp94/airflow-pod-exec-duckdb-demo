@@ -37,9 +37,10 @@ just scale     # synthetic projects of 10/50/200 models, four ways each (CI: man
 just down
 ```
 
-CI ([`.github/workflows/e2e.yml`](.github/workflows/e2e.yml)) runs all of the above on a fresh kind cluster on
-every push and PR. The benchmark tables appear in the run's job summary and `bench/results/` is uploaded as an
-artifact. To change the size, run it manually with the `bench_n` / `burst_pods` inputs.
+CI ([`.github/workflows/e2e.yml`](.github/workflows/e2e.yml)) runs all of the above on a fresh kind cluster. It
+takes ~45 min, so it runs only when started by hand (Actions tab, or `gh workflow run e2e.yml`); `bench_n` and
+`burst_pods` set the size. The benchmark tables appear in the run's job summary and `bench/results/` is uploaded as
+an artifact.
 
 Change a model, then `just reload` (rebuilds the image and restarts the pod; the PVC keeps the warehouse).
 
